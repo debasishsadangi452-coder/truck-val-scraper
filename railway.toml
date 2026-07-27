@@ -1,0 +1,14 @@
+# Railway config for the standalone TruckVal scraper service.
+#
+# This whole folder is the repo root when deployed on its own, so the Dockerfile
+# path is just "Dockerfile" and the build context is the package itself.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Weekly, Monday 03:00 UTC. Standard cron syntax — adjust as you like.
+cronSchedule = "0 3 * * 1"
+# Don't stack runs if one is still going when the next tick fires.
+restartPolicyType = "never"

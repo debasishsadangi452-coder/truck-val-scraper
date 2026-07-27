@@ -1,0 +1,31 @@
+{
+  "name": "truckval-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone truck scraper for TruckVal — all source scrapers (plain-HTTP + Playwright browser-gated) that upsert into the shared truck_listings Postgres table. Deployable as its own repo + Railway service.",
+  "scripts": {
+    "refresh:http": "node weekly-refresh.js",
+    "run:browser": "node run.js",
+    "scrape:otomoto": "node otomoto-scraper.js",
+    "scrape:autoline": "node autoline-scraper.js",
+    "scrape:truck7": "node truck7-scraper.js",
+    "scrape:autoline-bg": "node autoline-bg-scraper.js",
+    "scrape:autovit": "node autovit-scraper.js",
+    "scrape:truckscout24": "node truckscout24-scraper.js",
+    "scrape:truckstore": "node truckstore-scraper.js",
+    "scrape:mobilebg": "node mobilebg-scraper.js",
+    "scrape:truck1": "node truck1-scraper.js",
+    "scrape:trucksnl": "node trucksnl-scraper.js",
+    "load": "node load-listings.js",
+    "smoke:truck1": "node truck1-scraper.js --url",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "playwright": "^1.62.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
