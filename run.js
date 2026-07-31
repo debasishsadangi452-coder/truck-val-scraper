@@ -1,57 +1,78 @@
 #!/usr/bin/env node
-// One-shot entrypoint for the standalone browser scraper (Railway cron / local).
+// One-shot weekly entrypoint for the standalone scraper (Railway cron / local).
 //
-// Runs the Truck1 Playwright crawl, then loads the result into Postgres, then
-// exits. Railway's cron schedule re-runs the whole container on its cadence, so
-// this must terminate (non-zero on failure so a bad run shows up in Railway).
+// Scrapes every verified-working source, then loads them all into Postgres in a
+// single pass, then exits. Railway's cron re-runs the whole container on its
+// cadence, so this must terminate. It exits non-zero only if the *load* step
+// fails — the individual scrapers are best-effort, because one flaky site (or a
+// datacenter IP tripping a browser source's anti-bot gate) shouldn't fail the
+// whole weekly refresh.
+//
+// Both layers are upsert-based, so re-running never duplicates:
+//   - each <source>-scraper.js upserts by listing id into output/<slug>/.
+//   - load-listings.js upserts into truck_listings on (source, source_id).
 //
 // Config via env (set on the Railway service or a local .env):
-//   DATABASE_URL       required — SAME DB as the TruckVal web app
-//   TRUCK1_PAGES       result pages to crawl (default 20)
-//   TRUCK1_START       optional start/category URL (default: all trucks)
-//   TRUCK1_CONCURRENCY detail-page pool size (default 3 — keep it polite)
+//   DATABASE_URL          required — SAME DB as the TruckVal web app
+//   <SOURCE>_PAGES        result pages to crawl per source (defaults below)
+//   TRUCK1_CONCURRENCY    truck1 detail-page pool size (default 3 — stay polite)
+//   TRUCK1_START          optional truck1 start/category URL
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const PAGES = process.env.TRUCK1_PAGES || "20";
-const CONCURRENCY = process.env.TRUCK1_CONCURRENCY || "3";
-const START = process.env.TRUCK1_START;
-
-function run(label, args) {
+// Run a step. `required:false` logs the failure and continues instead of
+// aborting the whole run (used for the per-source scrapers).
+function run(label, args, { required = true } = {}) {
   console.log(`\n=== ${label} ===`);
   const result = spawnSync(process.execPath, args, { stdio: "inherit", cwd: __dirname });
   if (result.status !== 0) {
-    throw new Error(`${label} failed with exit code ${result.status}`);
+    const msg = `${label} failed with exit code ${result.status}`;
+    if (required) throw new Error(msg);
+    console.error(`[skip] ${msg} — continuing (best-effort source).`);
+    return false;
   }
+  return true;
 }
 
-// --- autoline.bg (plain HTTP, no browser — cheap, run it every time) ---------
-const AUTOLINE_BG_PAGES = process.env.AUTOLINE_BG_PAGES || "60";
-run(`Scrape autoline.bg (${AUTOLINE_BG_PAGES} pages)`, [
-  path.join(__dirname, "autoline-bg-scraper.js"),
-  "--max-pages",
-  String(AUTOLINE_BG_PAGES),
-]);
-run("Load autoline.bg", [
-  path.join(__dirname, "load-listings.js"),
-  "autoline-bg-trucks",
-  "autoline_bg",
-]);
+const script = (name) => path.join(__dirname, name);
+const pages = (envName, def) => String(process.env[envName] || def);
 
-// --- truck1.eu (Playwright; heavier, anti-bot risk on datacenter IPs) --------
-const scraperArgs = [
-  path.join(__dirname, "truck1-scraper.js"),
-  "--pages",
-  String(PAGES),
-  "--concurrency",
-  String(CONCURRENCY),
+// --- Plain-HTTP sources (cheap, reliable — run every time) -------------------
+// [envVar, defaultPages, scraperFile, extraArgs]
+const HTTP_SOURCES = [
+  ["OTOMOTO_PAGES", "40", "otomoto-scraper.js", ["--no-details"]],
+  ["AUTOLINE_PAGES", "40", "autoline-scraper.js", []],
+  ["TRUCK7_PAGES", "40", "truck7-scraper.js", ["--no-details"]],
+  ["AUTOLINE_BG_PAGES", "60", "autoline-bg-scraper.js", []],
+  ["AUTOVIT_PAGES", "40", "autovit-scraper.js", []],
+  ["MOBILEBG_PAGES", "40", "mobilebg-scraper.js", ["--no-details"]],
+  ["TRUCKSCOUT24_PAGES", "8", "truckscout24-scraper.js", ["--no-details"]],
 ];
-if (START) scraperArgs.push("--start-url", START);
 
-run(`Scrape truck1.eu (${PAGES} pages)`, scraperArgs);
-run("Load truck1", [path.join(__dirname, "load-listings.js"), "truck1-trucks", "truck1"]);
+for (const [envVar, def, file, extra] of HTTP_SOURCES) {
+  const p = pages(envVar, def);
+  run(`Scrape ${file} (${p} pages)`, [script(file), "--max-pages", p, ...extra], {
+    required: false, // one flaky site shouldn't fail the whole weekly refresh
+  });
+}
+
+// --- Browser (Playwright) source — best-effort on datacenter IPs -------------
+const TRUCK1_PAGES = pages("TRUCK1_PAGES", "20");
+const truck1Args = [
+  script("truck1-scraper.js"),
+  "--pages",
+  TRUCK1_PAGES,
+  "--concurrency",
+  pages("TRUCK1_CONCURRENCY", "3"),
+];
+if (process.env.TRUCK1_START) truck1Args.push("--start-url", process.env.TRUCK1_START);
+run(`Scrape truck1.eu (${TRUCK1_PAGES} pages)`, truck1Args, { required: false });
+
+// --- Load everything that produced output/ into Postgres, then exit ----------
+// load-listings.js with no args upserts every registered source that has a file.
+run("Load all sources into Postgres", [script("load-listings.js")]);
 
 console.log("\n=== refresh complete ===");
