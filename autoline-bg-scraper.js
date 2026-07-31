@@ -67,17 +67,64 @@ function bgPropMap(additionalProperty) {
   return map;
 }
 
+// Bulgarian → English country names. autoline.bg writes the seller's country in
+// Bulgarian as either "в България" (in Bulgaria, local) or "от <страна>" (from
+// <country>, foreign origin). Only "в България" was handled before, so every
+// foreign-origin ad (the bulk of the site) got no location. Map the common
+// exporter countries so they geocode.
+const BG_COUNTRY = {
+  България: "Bulgaria",
+  Нидерландия: "Netherlands",
+  Холандия: "Netherlands",
+  Германия: "Germany",
+  Полша: "Poland",
+  Белгия: "Belgium",
+  Франция: "France",
+  Италия: "Italy",
+  Испания: "Spain",
+  Португалия: "Portugal",
+  Австрия: "Austria",
+  Швейцария: "Switzerland",
+  Швеция: "Sweden",
+  Норвегия: "Norway",
+  Дания: "Denmark",
+  Финландия: "Finland",
+  Естония: "Estonia",
+  Латвия: "Latvia",
+  Литва: "Lithuania",
+  Румъния: "Romania",
+  Унгария: "Hungary",
+  Чехия: "Czechia",
+  Словакия: "Slovakia",
+  Словения: "Slovenia",
+  Хърватия: "Croatia",
+  Сърбия: "Serbia",
+  Гърция: "Greece",
+  Украйна: "Ukraine",
+  Русия: "Russia",
+  Турция: "Turkey",
+  Великобритания: "United Kingdom",
+  Ирландия: "Ireland",
+  Люксембург: "Luxembourg",
+  Китай: "China",
+};
+
 // The Bulgarian description string, e.g.
-//   "...Mercedes-Benz Antos в България ➤ Цена: 31 900 € | 62 500 лв. ✓
-//    Дата на производство: 2015 ✓ Пробег: 433000 км ✓ DF51053 ✓ Autoline"
-// Pull year + mileage; country is Bulgaria for autoline.bg (the seller market).
+//   "...Mercedes-Benz Antos в България ➤ ..."  (local)
+//   "...Volvo FH от Нидерландия ➤ ..."          (foreign origin)
+// Pull year + mileage, and resolve the country from either the "в"/"от" phrase.
 function parseDescription(desc) {
   const s = String(desc ?? "");
+  // Match "в <Country>" or "от <Country>" right before the ➤/✓ separator.
+  // NB: no leading \b — JS \b is ASCII-only, so it never fires before the
+  // Cyrillic "в"/"от"; use Unicode property escapes for the country name.
+  const bg = firstMatch(s, /(?:^|\s)(?:в|от)\s+(\p{Lu}[\p{L} .'-]+?)\s*(?:➤|✓|$)/u);
   return {
     year: firstMatch(s, /Дата на производство:\s*(\d{4})/),
     mileage: digits(firstMatch(s, /Пробег:\s*([\d\s.,]+)\s*км/i)),
-    // "в България" = "in Bulgaria" — the market these ads are listed in.
-    country: /в\s+България/.test(s) ? "Bulgaria" : "",
+    // Map the Bulgarian name to English; fall back to the raw name if unknown
+    // (Nominatim can still resolve many native-language country names).
+    country: bg ? BG_COUNTRY[bg] || bg : "",
   };
 }
 

@@ -65,6 +65,31 @@ const COUNTRIES = [
   "SK",
 ];
 
+// ISO country code → English name. Because we crawl one query PER country, we
+// already know each listing's country from the search window — so we can set it
+// even on a --no-details run (the detail page is the only OTHER source of
+// location, so without this, --no-details left country_origin blank).
+const CC_NAME = {
+  DE: "Germany",
+  NL: "Netherlands",
+  IT: "Italy",
+  BE: "Belgium",
+  PL: "Poland",
+  AT: "Austria",
+  EE: "Estonia",
+  FR: "France",
+  DK: "Denmark",
+  ES: "Spain",
+  HU: "Hungary",
+  CZ: "Czechia",
+  LV: "Latvia",
+  LT: "Lithuania",
+  RO: "Romania",
+  SE: "Sweden",
+  PT: "Portugal",
+  SK: "Slovakia",
+};
+
 function searchUrl(country) {
   const q = country ? `${CATEGORY}&countries=${country}` : CATEGORY;
   return `${BASE}/main/search/index?${q}`;
@@ -155,9 +180,13 @@ async function enrichDetail(record) {
   );
   // NB: "Emission class" here is a Euro category (euro3/euro6), not g/km CO2, so
   // co2_g_km is deliberately left blank rather than mis-mapped.
-  record.country_origin = country;
-  record.city = city;
-  record.region = country;
+  // Prefer detail-page location, but don't clobber the country the search
+  // window already gave us when the detail page has none.
+  if (country) {
+    record.country_origin = country;
+    record.region = country;
+  }
+  if (city) record.city = city;
   record.price_amount = price;
   record.price_currency = price ? "EUR" : "";
   record.vin = spec["vin"] || "";
@@ -166,7 +195,7 @@ async function enrichDetail(record) {
 // Crawl one search query (a country window, up to the site's 8-page cap),
 // enriching + upserting into the shared byId map. `processed` is shared across
 // all queries so a listing that appears under several filters is fetched once.
-async function crawlQuery(baseUrl, args, ctx) {
+async function crawlQuery(baseUrl, args, ctx, countryName = "") {
   const { byId, processed, counts, scrapedAt } = ctx;
   for (let page = 1; page <= args.maxPages; page++) {
     const url = searchPageUrl(baseUrl, page);
@@ -186,7 +215,17 @@ async function crawlQuery(baseUrl, args, ctx) {
     console.log(`  page ${page}: ${slugs.length} new`);
 
     const records = slugs.map((slug) =>
-      normaliseRecord({ id: slug, url: `${BASE}/tsp/${slug}` }, scrapedAt),
+      normaliseRecord(
+        {
+          id: slug,
+          url: `${BASE}/tsp/${slug}`,
+          // From the country search window — placeable even without details.
+          // enrichDetail may later overwrite with a more precise city+country.
+          country_origin: countryName,
+          region: countryName,
+        },
+        scrapedAt,
+      ),
     );
     if (args.details) {
       await mapPool(records, args.concurrency, async (record) => {
@@ -223,9 +262,10 @@ async function main() {
   );
 
   for (let i = 0; i < queries.length; i++) {
-    const label = args.search ? "custom" : args.countries[i] || "all";
+    const cc = args.search ? "" : args.countries[i] || "";
+    const label = args.search ? "custom" : cc || "all";
     console.log(`[${i + 1}/${queries.length}] country=${label}`);
-    await crawlQuery(queries[i], args, ctx);
+    await crawlQuery(queries[i], args, ctx, CC_NAME[cc] || "");
     await writeOutputs(SLUG, byId); // checkpoint after each country
   }
 

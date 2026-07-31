@@ -54,8 +54,14 @@ function adId(url) {
 // Pull what the JSON fields don't already give us (year, country, mileage,
 // load capacity). Regexes are anchored on autoline's fixed labels.
 function parseDescription(desc) {
+  // Country reads like "…advertisement from Romania ➤" or, for some countries,
+  // "…from the Netherlands ➤" / "…from the United Kingdom ➤". Allow an optional
+  // lowercase article ("the ") before the capitalised name, then drop it — the
+  // old regex required the match to start with a capital, so every "the X"
+  // country (Netherlands, UK, USA, UAE, …) silently produced no location.
+  const rawCountry = firstMatch(desc, /\bfrom\s+((?:the\s+)?[A-Z][A-Za-z .'-]+?)\s*(?:➤|✓|$)/);
   return {
-    country: firstMatch(desc, /\bfrom\s+([A-Z][A-Za-z .'-]+?)\s*(?:➤|✓|$)/),
+    country: rawCountry ? rawCountry.replace(/^the\s+/i, "").trim() : "",
     year: firstMatch(desc, /Year of manufacture:\s*(\d{4})/),
     mileage: digits(firstMatch(desc, /Mileage:\s*([\d\s.,]+)\s*km/i)),
     payload: digits(firstMatch(desc, /Load capacity:\s*([\d\s.,]+)\s*kg/i)),
