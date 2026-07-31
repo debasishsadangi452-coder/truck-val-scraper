@@ -107,6 +107,9 @@ const BG_COUNTRY = {
   Ирландия: "Ireland",
   Люксембург: "Luxembourg",
   Китай: "China",
+  Япония: "Japan",
+  Аржентина: "Argentina",
+  Мексико: "Mexico",
 };
 
 // The Bulgarian description string, e.g.
