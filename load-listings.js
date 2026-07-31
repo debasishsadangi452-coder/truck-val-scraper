@@ -181,7 +181,7 @@ async function loadSource({ slug, source }) {
   const jsonFile = path.join(OUTPUT_ROOT, slug, "listings.json");
   if (!existsSync(jsonFile)) {
     console.log(`skip ${source}: no file at ${jsonFile}`);
-    return 0;
+    return null; // null = source didn't run this pass (no output file)
   }
   const records = JSON.parse(await readFile(jsonFile, "utf8"));
   console.log(`loading ${records.length} record(s) for source="${source}" from ${slug}`);
@@ -198,18 +198,66 @@ async function loadSource({ slug, source }) {
   return records.length;
 }
 
+// Persistent run history so the web app can show scraper statistics over time.
+// Created on demand so the standalone scraper needs no separate migration step.
+async function ensureRunTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS scrape_runs (
+      id           bigserial PRIMARY KEY,
+      started_at   timestamptz NOT NULL,
+      finished_at  timestamptz NOT NULL DEFAULT now(),
+      duration_sec integer,
+      per_source   jsonb NOT NULL,      -- { source: recordsUpserted, ... }
+      total_upserted integer NOT NULL,  -- sum of records upserted this run
+      table_total    integer NOT NULL   -- COUNT(*) of truck_listings after load
+    )
+  `);
+}
+
+async function recordRun({ startedAt, perSource, totalUpserted, tableTotal }) {
+  try {
+    await ensureRunTable();
+    const durationSec = Math.round((Date.now() - startedAt.getTime()) / 1000);
+    await pool.query(
+      `INSERT INTO scrape_runs (started_at, duration_sec, per_source, total_upserted, table_total)
+       VALUES ($1, $2, $3::jsonb, $4, $5)`,
+      [startedAt, durationSec, JSON.stringify(perSource), totalUpserted, tableTotal],
+    );
+    console.log(`recorded run in scrape_runs (duration ${durationSec}s).`);
+  } catch (err) {
+    // Stats are non-critical: never fail a data load because logging the run failed.
+    console.error(`[warn] could not record scrape_runs row: ${err.message}`);
+  }
+}
+
 async function main() {
+  const startedAt = new Date();
   const [slugArg, sourceArg] = process.argv.slice(2);
   // Explicit slug wins; otherwise load every registered source that has a file.
+  const fullLoad = !slugArg;
   const targets = slugArg
     ? [{ slug: slugArg, source: sourceArg || slugArg.replace(/-trucks$/, "") }]
     : SOURCES;
 
   let total = 0;
-  for (const t of targets) total += await loadSource(t);
+  const perSource = {}; // source -> records upserted (only sources that produced output)
+  for (const t of targets) {
+    const n = await loadSource(t);
+    if (n !== null) {
+      total += n;
+      perSource[t.source] = n;
+    }
+  }
 
   const { rows } = await pool.query("SELECT count(*)::int AS count FROM truck_listings");
-  console.log(`done. loaded ${total} this run; table now has ${rows[0].count} row(s).`);
+  const tableTotal = rows[0].count;
+  console.log(`done. loaded ${total} this run; table now has ${tableTotal} row(s).`);
+
+  // Only the full weekly load (no slug arg) records a run — one-off manual loads
+  // of a single source shouldn't clutter the history.
+  if (fullLoad) {
+    await recordRun({ startedAt, perSource, totalUpserted: total, tableTotal });
+  }
   await pool.end();
 }
 
