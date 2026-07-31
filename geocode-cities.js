@@ -31,11 +31,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // appears under several rows. Value: [lat, lng] or null (geocoding failed).
 const geoCache = new Map();
 
-async function geocode(city, region) {
-  const key = `${city}|${region ?? ""}`;
-  if (geoCache.has(key)) return geoCache.get(key);
-
-  const q = region ? `${city}, ${region}` : city;
+// Geocode a free-text place query via Nominatim. Cached so each distinct query
+// string is only hit once (respecting the rate limit even across passes).
+async function geocodeQuery(q) {
+  if (geoCache.has(q)) return geoCache.get(q);
   const url = `${NOMINATIM}?format=json&limit=1&q=${encodeURIComponent(q)}`;
   let result = null;
   try {
@@ -53,15 +52,17 @@ async function geocode(city, region) {
   } catch (err) {
     console.warn(`  ! geocode failed for "${q}": ${err.message}`);
   }
-  geoCache.set(key, result);
+  geoCache.set(q, result);
   return result;
 }
 
-async function main() {
-  console.log("[geocode] finding distinct cities with NULL coordinates…");
-  // Distinct (city, region) pairs among rows that currently lack coordinates.
-  // Ordered by how many rows they'd fill, so the biggest wins land first.
-  const { rows: cities } = await pool.query(
+function geocode(city, region) {
+  return geocodeQuery(region ? `${city}, ${region}` : city);
+}
+
+// Pass 1: rows that HAVE a city → geocode "city, region" (precise).
+async function passCity() {
+  const { rows } = await pool.query(
     `SELECT city, region, count(*)::int AS n
        FROM truck_listings
       WHERE latitude IS NULL
@@ -70,50 +71,103 @@ async function main() {
       GROUP BY city, region
       ORDER BY n DESC`,
   );
-
   console.log(
-    `[geocode] ${cities.length} distinct city/region pairs to resolve ` +
-      `(${cities.reduce((s, c) => s + c.n, 0)} rows still missing coords).`,
+    `\n[pass 1 · city] ${rows.length} distinct city/region pairs ` +
+      `(${rows.reduce((s, c) => s + c.n, 0)} rows).`,
   );
 
-  let done = 0;
-  let updatedRows = 0;
-  let failed = 0;
-
-  for (const { city, region, n } of cities) {
+  let done = 0,
+    updated = 0,
+    failed = 0;
+  for (const { city, region, n } of rows) {
     done += 1;
     const coords = await geocode(city, region);
+    const label = `${city}${region ? ", " + region : ""}`;
     if (!coords) {
       failed += 1;
-      console.log(`  [${done}/${cities.length}] ✗ "${city}${region ? ", " + region : ""}" — no match (${n} rows)`);
+      console.log(`  [${done}/${rows.length}] ✗ "${label}" — no match (${n} rows)`);
       await sleep(RATE_LIMIT_MS);
       continue;
     }
     const [lat, lng] = coords;
-    // Only fill rows that are still NULL — preserves real scraped coords and
-    // makes the whole script idempotent / safe to resume.
-    const params = region
-      ? [lat, lng, city, region]
-      : [lat, lng, city];
     const whereRegion = region ? "AND region = $4" : "AND region IS NULL";
+    const params = region ? [lat, lng, city, region] : [lat, lng, city];
     const { rowCount } = await pool.query(
-      `UPDATE truck_listings
-          SET latitude = $1, longitude = $2
-        WHERE city = $3 ${whereRegion}
+      `UPDATE truck_listings SET latitude = $1, longitude = $2
+        WHERE city = $3 ${whereRegion} AND latitude IS NULL`,
+      params,
+    );
+    updated += rowCount;
+    console.log(`  [${done}/${rows.length}] ✓ "${label}" → ${lat.toFixed(3)}, ${lng.toFixed(3)} (${rowCount} rows)`);
+    await sleep(RATE_LIMIT_MS);
+  }
+  return { updated, failed, pairs: rows.length };
+}
+
+// Pass 2: rows with NO city but a region → geocode the region (approximate; the
+// truck lands at the region's centre). Disambiguated by country_origin when
+// present. This is what lifts the region-only sources off 0% on the map.
+async function passRegion() {
+  const { rows } = await pool.query(
+    `SELECT region, country_origin, count(*)::int AS n
+       FROM truck_listings
+      WHERE latitude IS NULL
+        AND (city IS NULL OR btrim(city) = '')
+        AND region IS NOT NULL
+        AND btrim(region) <> ''
+      GROUP BY region, country_origin
+      ORDER BY n DESC`,
+  );
+  console.log(
+    `\n[pass 2 · region] ${rows.length} distinct region/country pairs ` +
+      `(${rows.reduce((s, c) => s + c.n, 0)} rows).`,
+  );
+
+  let done = 0,
+    updated = 0,
+    failed = 0;
+  for (const { region, country_origin, n } of rows) {
+    done += 1;
+    const country = country_origin && country_origin.trim();
+    const q = country ? `${region}, ${country}` : region;
+    const coords = await geocodeQuery(q);
+    if (!coords) {
+      failed += 1;
+      console.log(`  [${done}/${rows.length}] ✗ "${q}" — no match (${n} rows)`);
+      await sleep(RATE_LIMIT_MS);
+      continue;
+    }
+    const [lat, lng] = coords;
+    const whereCountry = country ? "AND country_origin = $4" : "AND country_origin IS NULL";
+    const params = country ? [lat, lng, region, country_origin] : [lat, lng, region];
+    const { rowCount } = await pool.query(
+      `UPDATE truck_listings SET latitude = $1, longitude = $2
+        WHERE region = $3 ${whereCountry}
+          AND (city IS NULL OR btrim(city) = '')
           AND latitude IS NULL`,
       params,
     );
-    updatedRows += rowCount;
-    console.log(
-      `  [${done}/${cities.length}] ✓ "${city}${region ? ", " + region : ""}" → ` +
-        `${lat.toFixed(4)}, ${lng.toFixed(4)} (${rowCount} rows)`,
-    );
+    updated += rowCount;
+    console.log(`  [${done}/${rows.length}] ✓ "${q}" → ${lat.toFixed(3)}, ${lng.toFixed(3)} (${rowCount} rows)`);
     await sleep(RATE_LIMIT_MS);
   }
+  return { updated, failed, pairs: rows.length };
+}
 
+async function main() {
+  const before = await pool.query("SELECT count(latitude)::int c, count(*)::int t FROM truck_listings");
+  console.log(`[geocode] starting — ${before.rows[0].c}/${before.rows[0].t} rows already have coords.`);
+
+  const p1 = await passCity();
+  const p2 = await passRegion();
+
+  const after = await pool.query("SELECT count(latitude)::int c, count(*)::int t FROM truck_listings");
   console.log(
-    `\n[geocode] complete. ${updatedRows} rows updated across ` +
-      `${cities.length - failed} geocoded cities (${failed} unresolved).`,
+    `\n[geocode] complete.` +
+      `\n  pass 1 (city):   +${p1.updated} rows (${p1.pairs} places, ${p1.failed} unresolved)` +
+      `\n  pass 2 (region): +${p2.updated} rows (${p2.pairs} places, ${p2.failed} unresolved)` +
+      `\n  coords now: ${after.rows[0].c}/${after.rows[0].t} ` +
+      `(${(after.rows[0].t - after.rows[0].c)} still missing — rows with no city/region text).`,
   );
   await pool.end();
 }
