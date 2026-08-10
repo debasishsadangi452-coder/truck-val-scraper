@@ -47,10 +47,29 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const BASE_URL = "https://www.otomoto.pl/ciezarowe";
-const OUTPUT_DIR = path.join(__dirname, "..", "scripts-output", "otomoto-trucks");
-const CSV_FILE = path.join(OUTPUT_DIR, "listings.csv");
-const JSON_FILE = path.join(OUTPUT_DIR, "listings.json");
+// otomoto category slug. "ciezarowe" = tractor units/trucks (default);
+// "przyczepy" = trailers/semi-trailers (curtainside, reefer, etc.). Both list
+// pages share the same __NEXT_DATA__ advertSearch shape and filter params.
+const CATEGORY_SLUG = { trucks: "ciezarowe", trailers: "przyczepy" };
+const OTOMOTO_ORIGIN = "https://www.otomoto.pl";
+// Separate output folder per category so trailers and trucks don't overwrite.
+const OUTPUT_SLUG = { trucks: "otomoto-trucks", trailers: "otomoto-trailers" };
+
+// Resolved from --category at startup (see main()). Default to trucks so any
+// direct import/older invocation keeps working.
+let BASE_URL = `${OTOMOTO_ORIGIN}/${CATEGORY_SLUG.trucks}`;
+let OUTPUT_DIR = path.join(__dirname, "..", "scripts-output", OUTPUT_SLUG.trucks);
+let CSV_FILE = path.join(OUTPUT_DIR, "listings.csv");
+let JSON_FILE = path.join(OUTPUT_DIR, "listings.json");
+
+function setCategory(category) {
+  const slug = CATEGORY_SLUG[category] ?? CATEGORY_SLUG.trucks;
+  const out = OUTPUT_SLUG[category] ?? OUTPUT_SLUG.trucks;
+  BASE_URL = `${OTOMOTO_ORIGIN}/${slug}`;
+  OUTPUT_DIR = path.join(__dirname, "..", "scripts-output", out);
+  CSV_FILE = path.join(OUTPUT_DIR, "listings.csv");
+  JSON_FILE = path.join(OUTPUT_DIR, "listings.json");
+}
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -111,6 +130,8 @@ function parseArgs(argv) {
     concurrency: 4,
     makes: [],
     queries: [""],
+    // "trucks" (default, /ciezarowe) or "trailers" (/przyczepy).
+    category: "trucks",
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -118,6 +139,7 @@ function parseArgs(argv) {
     else if (a === "--year-to") args.yearTo = Number(argv[++i]);
     else if (a === "--max-pages") args.maxPages = Number(argv[++i]);
     else if (a === "--concurrency") args.concurrency = Math.max(1, Number(argv[++i]) || 1);
+    else if (a === "--category") args.category = argv[++i] === "trailers" ? "trailers" : "trucks";
     else if (a === "--no-details") args.details = false;
     else if (a === "--makes")
       args.makes = argv[++i]
@@ -435,6 +457,8 @@ async function runScrape(args) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  setCategory(args.category); // point BASE_URL + output paths at the chosen category
+  console.log(`otomoto category: ${args.category} (${BASE_URL})`);
   await runScrape(args);
 }
 

@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "./lib/db.js";
+import { normalizeModel } from "./lib/normalize-model.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_ROOT = path.join(__dirname, "output");
@@ -27,6 +28,7 @@ const OUTPUT_ROOT = path.join(__dirname, "output");
 // browser-based sources; add a line per scraper you add here.
 const SOURCES = [
   { slug: "otomoto-trucks", source: "otomoto" },
+  { slug: "otomoto-trailers", source: "otomoto" },
   { slug: "autoline-trucks", source: "autoline" },
   { slug: "truck7-trucks", source: "truck7" },
   { slug: "autoline-bg-trucks", source: "autoline_bg" },
@@ -45,6 +47,7 @@ const COLUMNS = [
   "title",
   "make",
   "model",
+  "model_normalized",
   "year",
   "mileage_km",
   "fuel_type",
@@ -119,6 +122,8 @@ function toRow(record, source) {
     // whole batch; fall back to the title's first word, then a placeholder.
     record.make || (record.title || "").split(/\s+/)[0] || "Unknown",
     record.model || null,
+    // Canonical model for grouping/matching (raw `model` kept verbatim above).
+    normalizeModel(record.make || (record.title || "").split(/\s+/)[0] || "Unknown", record.model),
     toInt(record.year),
     toInt(record.mileage_km),
     record.fuel_type || null,
@@ -230,8 +235,18 @@ async function recordRun({ startedAt, perSource, totalUpserted, tableTotal }) {
   }
 }
 
+// The canonical-model column is additive; ensure it exists so a fresh DB (or one
+// migrated before this feature) can accept the model_normalized upsert value.
+async function ensureModelNormalizedColumn() {
+  await pool.query(`ALTER TABLE truck_listings ADD COLUMN IF NOT EXISTS model_normalized TEXT`);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_truck_listings_model_norm ON truck_listings (lower(make), model_normalized)`,
+  );
+}
+
 async function main() {
   const startedAt = new Date();
+  await ensureModelNormalizedColumn();
   const [slugArg, sourceArg] = process.argv.slice(2);
   // Explicit slug wins; otherwise load every registered source that has a file.
   const fullLoad = !slugArg;

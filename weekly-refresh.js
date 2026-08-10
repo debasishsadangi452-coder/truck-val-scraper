@@ -33,6 +33,28 @@ const CURRENT_YEAR = new Date().getFullYear();
 const YEAR_FROM = CURRENT_YEAR - 7;
 const MAKES = "volvo,scania,daf,man,mercedes-benz";
 
+// Priority tractor-unit models the business actively sources. otomoto gets a
+// second, targeted pass on these queries so we pull MORE of them than the broad
+// make-sweep alone would (deeper into the result set, model-specific). Comma-
+// separated; each becomes its own otomoto search[qr] query.
+const PRIORITY_TRUCK_QUERIES = [
+  "XF 480",
+  "XF 530",
+  "CF",
+  "FH 500",
+  "FH 460",
+  "FH 540",
+  "FH 750",
+  "TGX 18.510",
+  "TGX 18.470",
+  "F-MAX",
+].join(",");
+
+// Priority trailer brands as otomoto make slugs, for the /przyczepy category
+// pass. These are curtainside/reefer semi-trailers, a separate category from
+// tractor units — see the trailer pass below.
+const PRIORITY_TRAILER_MAKES = ["kogel", "krone", "fliegl", "wielton"].join(",");
+
 function run(label, command, args) {
   console.log(`\n=== ${label} ===`);
   const result = spawnSync(command, args, {
@@ -58,6 +80,37 @@ const otomotoArgs = [
 ];
 if (!withDetails) otomotoArgs.push("--no-details");
 run(`Scrape otomoto.pl (${YEAR_FROM}-${CURRENT_YEAR}, ${MAKES})`, process.execPath, otomotoArgs);
+
+// ---- otomoto.pl targeted pass: pull MORE of the priority models ------------
+// A second scoped crawl on the specific models we sell. Each query is its own
+// search, so together they reach deeper into each model's result set than the
+// single broad make-sweep above (which is capped by --max-pages across ALL
+// makes). Upsert-by-id means this only adds/refreshes — never duplicates.
+const otomotoPriorityArgs = [
+  path.join(__dirname, "otomoto-scraper.js"),
+  "--year-from", String(YEAR_FROM),
+  "--year-to", String(CURRENT_YEAR),
+  "--makes", MAKES,
+  "--query", PRIORITY_TRUCK_QUERIES,
+  "--max-pages", "40",
+];
+if (!withDetails) otomotoPriorityArgs.push("--no-details");
+run("Scrape otomoto.pl (priority models)", process.execPath, otomotoPriorityArgs);
+
+// ---- otomoto.pl trailer brands (the /przyczepy category, make-scoped) -------
+// Trailers live in a different otomoto category than tractor units, so this pass
+// targets /przyczepy with the trailer brands as make filters (search[qr] is
+// ignored there). Writes to its own otomoto-trailers output folder.
+const otomotoTrailerArgs = [
+  path.join(__dirname, "otomoto-scraper.js"),
+  "--category", "trailers",
+  "--year-from", String(YEAR_FROM),
+  "--year-to", String(CURRENT_YEAR),
+  "--makes", PRIORITY_TRAILER_MAKES,
+  "--max-pages", "30",
+];
+if (!withDetails) otomotoTrailerArgs.push("--no-details");
+run("Scrape otomoto.pl trailers (Kögel/Krone/Fliegl/Wielton)", process.execPath, otomotoTrailerArgs);
 
 // ---- autoline.info (whole trucks category, JSON-LD list pages) -------------
 run("Scrape autoline.info", process.execPath, [
