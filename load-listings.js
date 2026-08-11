@@ -29,6 +29,10 @@ const OUTPUT_ROOT = path.join(__dirname, "output");
 const SOURCES = [
   { slug: "otomoto-trucks", source: "otomoto" },
   { slug: "otomoto-trailers", source: "otomoto" },
+  { slug: "sauto-cz-trucks", source: "sauto_cz" },
+  { slug: "autoplius-lt-trucks", source: "autoplius_lt" },
+  { slug: "planet-trucks-trucks", source: "planet_trucks" },
+  { slug: "mjaatrucks-lt-trucks", source: "mjaatrucks_lt" },
   { slug: "autoline-trucks", source: "autoline" },
   { slug: "truck7-trucks", source: "truck7" },
   { slug: "autoline-bg-trucks", source: "autoline_bg" },

@@ -161,6 +161,29 @@ run("Scrape mobile.bg", process.execPath, [
   "40",
 ]);
 
+// ---- sauto.cz (Czechia, JSON API — trucks + trailers) ----------------------
+run("Scrape sauto.cz (Czechia)", process.execPath, [path.join(__dirname, "sauto-cz-scraper.js")]);
+
+// ---- planet-trucks.com (France, priority makes) ----------------------------
+run("Scrape planet-trucks.com (France)", process.execPath, [
+  path.join(__dirname, "planet-trucks-scraper.js"),
+  "--concurrency",
+  "2",
+]);
+
+// ---- autoplius.lt (Lithuania, Playwright + residential proxy) ---------------
+// Cloudflare-gated: only runs when PROXY_URL points at a residential proxy.
+// Skipped (not failed) otherwise, so the scheduled refresh never breaks on it.
+if (process.env.PROXY_URL) {
+  run("Scrape autoplius.lt (Lithuania)", process.execPath, [
+    path.join(__dirname, "autoplius-lt-scraper.js"),
+    "--pages",
+    "15",
+  ]);
+} else {
+  console.log("\n=== Skip autoplius.lt (Lithuania): set PROXY_URL (residential proxy) to enable ===");
+}
+
 // ---- load everything into Postgres (all sources, upsert) -------------------
 run("Load into Postgres", process.execPath, [path.join(__dirname, "load-listings.js")]);
 

@@ -142,9 +142,16 @@ function powerHp(value) {
 
 // "Chassis cabAstra HD9" (H1 = category + name). We don't rely on it — make and
 // model come from the dt spec fields, which are clean.
+// Returns true if the detail page was fetched AND yielded a real make/model;
+// false if the fetch failed or the page had no spec table (so the caller can
+// skip persisting a blank "Unknown" row). A transient fetch miss is retried once.
 async function enrichDetail(record) {
-  const html = await fetchText(record.url);
-  if (!html) return;
+  let html = await fetchText(record.url);
+  if (!html) {
+    await randomDelay([1500, 3000]);
+    html = await fetchText(record.url); // one retry for a transient miss/throttle
+  }
+  if (!html) return false;
   const spec = specMap(html);
 
   const make = spec["manufacturer"] || spec["make"] || spec["brand"] || "";
@@ -190,6 +197,11 @@ async function enrichDetail(record) {
   record.price_amount = price;
   record.price_currency = price ? "EUR" : "";
   record.vin = spec["vin"] || "";
+
+  // A real listing yields a manufacturer (or at least a model). If neither came
+  // through, the detail page didn't parse — signal failure so we don't persist a
+  // blank "Unknown" row that pollutes the DB.
+  return Boolean(make || model);
 }
 
 // Crawl one search query (a country window, up to the site's 8-page cap),
@@ -227,22 +239,33 @@ async function crawlQuery(baseUrl, args, ctx, countryName = "") {
         scrapedAt,
       ),
     );
+    // Track which records enriched OK; when details are on we only persist those,
+    // so a failed detail fetch never lands as a blank "Unknown" row.
+    const ok = new Set();
     if (args.details) {
       await mapPool(records, args.concurrency, async (record) => {
         try {
-          await enrichDetail(record);
+          if (await enrichDetail(record)) ok.add(record.id);
         } catch (err) {
           console.warn(`  detail failed for ${record.url}: ${err.message}`);
         }
         await randomDelay([500, 1200]);
       });
     }
+    let skipped = 0;
     for (const record of records) {
+      // With details on, drop records that didn't yield a make/model.
+      if (args.details && !ok.has(record.id)) {
+        processed.delete(record.id); // allow a retry on a later pass/run
+        skipped++;
+        continue;
+      }
       const key = String(record.id);
       if (byId.has(key)) counts.updated++;
       else counts.added++;
       byId.set(key, record);
     }
+    if (skipped) console.log(`  (${skipped} skipped — detail parse failed, will retry later)`);
     if (raw < 25) break; // last page for this query
     await randomDelay([1200, 2500]);
   }
