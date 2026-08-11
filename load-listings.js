@@ -33,6 +33,7 @@ const SOURCES = [
   { slug: "autoplius-lt-trucks", source: "autoplius_lt" },
   { slug: "planet-trucks-trucks", source: "planet_trucks" },
   { slug: "mjaatrucks-lt-trucks", source: "mjaatrucks_lt" },
+  { slug: "planet-trucks-trailers", source: "planet_trucks" },
   { slug: "autoline-trucks", source: "autoline" },
   { slug: "truck7-trucks", source: "truck7" },
   { slug: "autoline-bg-trucks", source: "autoline_bg" },

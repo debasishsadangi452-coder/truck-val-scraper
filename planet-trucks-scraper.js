@@ -27,17 +27,19 @@ import { stripTags, firstMatch, digits } from "./lib/html-utils.js";
 // Force IPv4 connections process-wide so the crawl connects reliably.
 setGlobalDispatcher(new Agent({ connect: { family: 4, timeout: 15000 } }));
 
-const SLUG = "planet-trucks-trucks";
 const BASE = "https://www.planet-trucks.com";
 
-// Priority makes → planet-trucks make code. Ford omitted: no matching category
-// code on the site (its F-MAX volume there is negligible anyway).
-const MAKE_CODES = { DAF: 180, Volvo: 774, MAN: 496 };
-// cat 31 = tractor-unit, 32 = (rigid) truck.
-const CATEGORIES = [
+// Trucks: priority makes → make code, categories 31 (tractor) + 32 (rigid truck).
+const TRUCK_MAKE_CODES = { DAF: 180, Volvo: 774, MAN: 496 };
+const TRUCK_CATEGORIES = [
   { cat: 31, kind: "tractor-unit" },
   { cat: 32, kind: "truck" },
 ];
+// Trailers: priority trailer brands → code, category 35 (semi-trailer). Fliegl &
+// Wielton aren't carried by planet-trucks (Eastern-European brands) — covered by
+// otomoto/sauto instead.
+const TRAILER_MAKE_CODES = { Kögel: 412, Krone: 428, "Schmitz-Cargobull": 680 };
+const TRAILER_CATEGORIES = [{ cat: 35, kind: "semi-trailer" }];
 
 // planet-trucks scopes results by country via a URL slug + an "n<CC>" code (both
 // verified 2026-08). Poland is deliberately excluded (already covered by otomoto).
@@ -51,11 +53,14 @@ const COUNTRIES = {
 };
 const DEFAULT_COUNTRIES = ["DE", "CZ", "BE", "NL", "LT"]; // FR handled by its own run
 
+const KIND_BY_CAT = { 31: "tractor-unit", 32: "truck", 35: "semi-trailer" };
+
 function parseArgs(argv) {
-  const args = { concurrency: 2, maxPages: 25, countries: DEFAULT_COUNTRIES };
+  const args = { concurrency: 2, maxPages: 25, countries: DEFAULT_COUNTRIES, trailers: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--concurrency") args.concurrency = Math.max(1, Number(argv[++i]) || 1);
     else if (argv[i] === "--max-pages") args.maxPages = Number(argv[++i]);
+    else if (argv[i] === "--trailers") args.trailers = true;
     else if (argv[i] === "--country")
       args.countries = argv[++i]
         .toUpperCase()
@@ -68,7 +73,7 @@ function parseArgs(argv) {
 
 function countryUrl(makeSlug, code, cat, cc) {
   const { slug } = COUNTRIES[cc];
-  return `${BASE}/${makeSlug}-${cat === 31 ? "tractor-unit" : "truck"}/${slug}/~a1b${cat}e${code}n${cc}/${makeSlug}-${slug}.html`;
+  return `${BASE}/${makeSlug}-${KIND_BY_CAT[cat]}/${slug}/~a1b${cat}e${code}n${cc}/${makeSlug}-${slug}.html`;
 }
 
 // Pull result cards from a list page. Each card gives id, name (make+model),
@@ -178,30 +183,44 @@ async function crawl(makeSlug, code, cat, cc, ctx, args) {
   await randomDelay([1000, 2200]);
 }
 
+// Make display name → the ASCII URL slug planet-trucks uses (Kögel → kogel).
+function toSlug(name) {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const slug = args.trailers ? "planet-trucks-trailers" : "planet-trucks-trucks";
+  const source = args.trailers ? "planet_trucks_trailers" : "planet_trucks";
+  const makeCodes = args.trailers ? TRAILER_MAKE_CODES : TRUCK_MAKE_CODES;
+  const categories = args.trailers ? TRAILER_CATEGORIES : TRUCK_CATEGORIES;
+
   const scrapedAt = new Date().toISOString();
-  const byId = await loadExisting(SLUG);
+  const byId = await loadExisting(slug);
   const startCount = byId.size;
-  const ctx = { byId, counts: { added: 0, updated: 0 }, scrapedAt };
+  const ctx = { byId, counts: { added: 0, updated: 0 }, scrapedAt, slug };
 
   console.log(
-    `--- planet-trucks.com scrape (countries: ${args.countries.join(",")}, priority makes) ---`,
+    `--- planet-trucks.com ${args.trailers ? "TRAILER" : "truck"} scrape (countries: ${args.countries.join(",")}) ---`,
   );
   for (const cc of args.countries) {
-    for (const [makeName, code] of Object.entries(MAKE_CODES)) {
-      const makeSlug = makeName.toLowerCase();
-      for (const { cat } of CATEGORIES) {
-        await crawl(makeSlug, code, cat, cc, ctx, args);
-        await writeOutputs(SLUG, byId); // checkpoint per make/category
+    for (const [makeName, code] of Object.entries(makeCodes)) {
+      for (const { cat } of categories) {
+        await crawl(toSlug(makeName), code, cat, cc, ctx, args);
+        await writeOutputs(slug, byId); // checkpoint per make/category
       }
     }
   }
 
   console.log(
-    `--- planet-trucks: ${ctx.counts.added} new, ${ctx.counts.updated} refreshed, ${byId.size} total (was ${startCount}) ---`,
+    `--- planet-trucks ${args.trailers ? "trailers" : "trucks"}: ${ctx.counts.added} new, ${ctx.counts.updated} refreshed, ${byId.size} total (was ${startCount}) ---`,
   );
-  console.log(`Next: node load-listings.js ${SLUG} planet_trucks`);
+  console.log(`Next: node load-listings.js ${slug} ${source}`);
 }
 
 main().catch((err) => {
