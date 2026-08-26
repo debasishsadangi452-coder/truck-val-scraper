@@ -43,6 +43,9 @@ const SOURCES = [
   { slug: "mobilebg-trucks", source: "mobilebg" },
   { slug: "truck1-trucks", source: "truck1" },
   { slug: "trucksnl-trucks", source: "trucksnl" },
+  { slug: "dafusedtrucks-trucks", source: "dafusedtrucks" },
+  { slug: "autoline-daf-trucks", source: "autoline" },
+  { slug: "via-mobilis-daf", source: "via_mobilis" },
 ];
 
 const COLUMNS = [

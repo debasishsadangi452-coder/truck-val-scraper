@@ -23,23 +23,45 @@
 //   node scripts/autoline-trucks-scraper.js
 //   node scripts/autoline-trucks-scraper.js --max-pages 40
 //   node scripts/autoline-trucks-scraper.js --category truck-tractors--c42
+//   # A full filtered search URL (e.g. brand-scoped via mark_id=…). Paginates it
+//   # with &page=N and writes to its own --slug so it doesn't mix with the
+//   # generic trucks crawl:
+//   node scripts/autoline-trucks-scraper.js \
+//     --url "https://autoline.info/-/truck-tractors/Europe--c42cgrp1?mark_id=2525m1;2525m44721;2525m50908" \
+//     --slug autoline-daf-trucks
 //
 // No dependencies beyond Node's built-in fetch (Node 18+).
 
 import { fetchText, normaliseRecord, runScrape, IMAGE_URL_SEPARATOR } from "./lib/scrape-core.js";
 import { extractJsonLd, findJsonLd, propMap, firstMatch, digits } from "./lib/html-utils.js";
 
-const SLUG = "autoline-trucks";
+const DEFAULT_SLUG = "autoline-trucks";
 const BASE = "https://autoline.info";
 
 function parseArgs(argv) {
-  const args = { maxPages: 50, category: "trucks--c2" };
+  const args = { maxPages: 50, startPage: 1, category: "trucks--c2", url: null, slug: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--max-pages") args.maxPages = Number(argv[++i]);
+    else if (a === "--start-page") args.startPage = Math.max(1, Number(argv[++i]) || 1);
     else if (a === "--category") args.category = argv[++i];
+    else if (a === "--url") args.url = argv[++i];
+    else if (a === "--slug") args.slug = argv[++i];
   }
   return args;
+}
+
+// Build the list-page URL for page N. In --url mode we paginate the given
+// filtered search URL by appending &page=N to its existing query string (so a
+// mark_id / other facet filter is preserved); otherwise the generic
+// /-/<category>?page=N form. Page 1 carries no page param.
+function pageUrl(args, page) {
+  if (args.url) {
+    if (page <= 1) return args.url;
+    const sep = args.url.includes("?") ? "&" : "?";
+    return `${args.url}${sep}page=${page}`;
+  }
+  return `${BASE}/-/${args.category}${page > 1 ? `?page=${page}` : ""}`;
 }
 
 // The stable ad id is the numeric run at the very end of the ad URL, after the
@@ -119,8 +141,8 @@ function productToRecord(item, scrapedAt) {
 
 async function* listPages(args) {
   const scrapedAt = new Date().toISOString();
-  for (let page = 1; page <= args.maxPages; page++) {
-    const url = `${BASE}/-/${args.category}${page > 1 ? `?page=${page}` : ""}`;
+  for (let page = args.startPage; page <= args.maxPages; page++) {
+    const url = pageUrl(args, page);
     console.log(`fetching page ${page}: ${url}`);
     const html = await fetchText(url);
     if (!html) {
@@ -142,12 +164,14 @@ async function* listPages(args) {
   }
 }
 
-const source = { slug: SLUG, listPages, pageDelay: [1500, 3000], stopOnEmptyPage: true };
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const slug = args.slug || DEFAULT_SLUG;
+  const source = { slug, listPages, pageDelay: [1500, 3000], stopOnEmptyPage: true };
   console.log(
-    `--- autoline.info scrape: category=${args.category}, max ${args.maxPages} pages ---`,
+    args.url
+      ? `--- autoline.info scrape: url=${args.url} → slug=${slug}, max ${args.maxPages} pages ---`
+      : `--- autoline.info scrape: category=${args.category} → slug=${slug}, max ${args.maxPages} pages ---`,
   );
   await runScrape(source, args);
 }

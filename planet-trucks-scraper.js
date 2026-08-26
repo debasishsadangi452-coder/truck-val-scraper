@@ -30,7 +30,7 @@ setGlobalDispatcher(new Agent({ connect: { family: 4, timeout: 15000 } }));
 const BASE = "https://www.planet-trucks.com";
 
 // Trucks: priority makes → make code, categories 31 (tractor) + 32 (rigid truck).
-const TRUCK_MAKE_CODES = { DAF: 180, Volvo: 774, MAN: 496 };
+const TRUCK_MAKE_CODES = { DAF: 180, Volvo: 774, MAN: 496, Ford: 269 };
 const TRUCK_CATEGORIES = [
   { cat: 31, kind: "tractor-unit" },
   { cat: 32, kind: "truck" },
@@ -56,11 +56,13 @@ const DEFAULT_COUNTRIES = ["DE", "CZ", "BE", "NL", "LT"]; // FR handled by its o
 const KIND_BY_CAT = { 31: "tractor-unit", 32: "truck", 35: "semi-trailer" };
 
 function parseArgs(argv) {
-  const args = { concurrency: 2, maxPages: 25, countries: DEFAULT_COUNTRIES, trailers: false };
+  const args = { concurrency: 2, maxPages: 25, countries: DEFAULT_COUNTRIES, trailers: false, makes: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--concurrency") args.concurrency = Math.max(1, Number(argv[++i]) || 1);
     else if (argv[i] === "--max-pages") args.maxPages = Number(argv[++i]);
     else if (argv[i] === "--trailers") args.trailers = true;
+    else if (argv[i] === "--makes")
+      args.makes = argv[++i].split(",").map((m) => m.trim().toLowerCase());
     else if (argv[i] === "--country")
       args.countries = argv[++i]
         .toUpperCase()
@@ -96,10 +98,14 @@ function parseCards(html) {
 }
 
 // "DAF XF FT 480 tractor unit" → { make:"DAF", model:"XF FT 480" }.
+// Fold make names whose diacritics break exact-match filters downstream
+// (the priority preset matches lower(make)='kogel', so "Kögel" must → "Kogel").
+const MAKE_ALIASES = { Kögel: "Kogel" };
 function splitName(name) {
-  const t = stripTags(name).replace(/\b(tractor unit|truck|chassis truck|rigid)\b/i, "").trim();
+  const t = stripTags(name).replace(/\b(tractor unit|truck|chassis truck|rigid|semi-trailer)\b/i, "").trim();
   const parts = t.split(/\s+/);
-  return { make: parts[0] || "", model: parts.slice(1).join(" ").trim() };
+  const make = parts[0] || "";
+  return { make: MAKE_ALIASES[make] || make, model: parts.slice(1).join(" ").trim() };
 }
 
 async function enrichDetail(record) {
@@ -197,7 +203,12 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const slug = args.trailers ? "planet-trucks-trailers" : "planet-trucks-trucks";
   const source = args.trailers ? "planet_trucks_trailers" : "planet_trucks";
-  const makeCodes = args.trailers ? TRAILER_MAKE_CODES : TRUCK_MAKE_CODES;
+  let makeCodes = args.trailers ? TRAILER_MAKE_CODES : TRUCK_MAKE_CODES;
+  if (args.makes) {
+    makeCodes = Object.fromEntries(
+      Object.entries(makeCodes).filter(([name]) => args.makes.includes(name.toLowerCase())),
+    );
+  }
   const categories = args.trailers ? TRAILER_CATEGORIES : TRUCK_CATEGORIES;
 
   const scrapedAt = new Date().toISOString();
