@@ -83,13 +83,18 @@ function cardToRecord(card, scrapedAt) {
   // Make: "Daf" → "DAF" (normalize-model + the priority filter lower() it either
   // way, but keep the stored value uppercase-consistent with other sources).
   const make = (labelled(text, "Make") || "DAF").toUpperCase();
-  const range = labelled(text, "Range").toUpperCase(); // e.g. "XF"
+  const range = labelled(text, "Range").toUpperCase(); // e.g. "XF", "TGX", "FH"
   const power = digits((text.match(/\b(\d{2,4})\s*HP\b/) || [])[1] || "");
-  // Model: prefer the MARKETING model from the title (e.g. "DAF XF 530 6x4 | …")
-  // — the card's HP is the true engine HP (531), which fragments grouping. Pull
-  // "<range> <3-digit>" out of the title; fall back to range + HP.
-  const titleModel = (titleAttr.match(new RegExp(`\\b${range}\\s*(\\d{3})\\b`, "i")) || [])[0];
-  const model = (titleModel || [range, power].filter(Boolean).join(" ")).trim() || range;
+  // Model: prefer the model token straight from the TITLE, which carries the
+  // real marketing/chassis designation (e.g. "MAN TGX 26.500", "DAF XF 530",
+  // "Volvo FH 500") — the card's Range+HP loses the chassis code and mis-tiers
+  // Volvo (HP 539 vs marketing FH 540). We take "<range> <code>" from the title:
+  // the code is either an "NN.NNN" chassis (MAN) or a 3-digit power (DAF/Volvo).
+  // normalize-model.js then folds it to the canonical name. Fall back to range+HP.
+  const afterRange = range
+    ? (titleAttr.match(new RegExp(`\\b${range}\\s+(\\d{2}\\.\\d{3}|\\d{3})\\b`, "i")) || [])[0]
+    : "";
+  const model = (afterRange || [range, power].filter(Boolean).join(" ")).trim() || range;
 
   // Price: data-price="65,900 EUR" on the card wrapper, else "… EUR" text.
   const priceAttr = html.match(/data-price="([\d.,]+)\s*([A-Z]{3})?"/) || [];

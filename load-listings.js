@@ -46,6 +46,10 @@ const SOURCES = [
   { slug: "dafusedtrucks-trucks", source: "dafusedtrucks" },
   { slug: "autoline-daf-trucks", source: "autoline" },
   { slug: "via-mobilis-daf", source: "via_mobilis" },
+  { slug: "via-mobilis-daf-xf", source: "via_mobilis" },
+  { slug: "via-mobilis-daf-cf", source: "via_mobilis" },
+  { slug: "via-mobilis-volvo-fh", source: "via_mobilis" },
+  { slug: "via-mobilis-man-tgx", source: "via_mobilis" },
 ];
 
 const COLUMNS = [
