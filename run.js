@@ -71,8 +71,41 @@ const truck1Args = [
 if (process.env.TRUCK1_START) truck1Args.push("--start-url", process.env.TRUCK1_START);
 run(`Scrape truck1.eu (${TRUCK1_PAGES} pages)`, truck1Args, { required: false });
 
-// --- Load everything that produced output/ into Postgres, then exit ----------
+// --- Load everything that produced output/ into Postgres --------------------
 // load-listings.js with no args upserts every registered source that has a file.
 run("Load all sources into Postgres", [script("load-listings.js")]);
+
+// --- AUCTION sources (own table) --------------------------------------------
+// Auction lots go to auction_listings, not truck_listings (see
+// scripts/db/auction-schema.sql for why). They MUST be re-scraped on the same
+// cadence as everything else — more so, in fact: a lot's `current_bid_amount`
+// and `bidding_status` are live values that go stale the moment bidding moves,
+// and lots close and disappear within days. The upsert refreshes the bid on
+// every existing lot and adds newly-published ones, so a weekly tick keeps the
+// table self-correcting rather than accumulating dead rows.
+//
+// Both TBAuctions platforms are plain HTTP, so they're cheap enough to run every
+// time. rbauction/mascus are NOT here — they need metered Apify credits and are
+// run by hand (see SCRAPERS.md).
+const AUCTION_PAGES = pages("AUCTION_PAGES", "15");
+for (const platform of ["surplex", "troostwijk"]) {
+  for (const category of ["trucks", "trailers"]) {
+    run(
+      `Scrape ${platform} auctions (${category}, ${AUCTION_PAGES} pages)`,
+      [
+        script("tbauctions-scraper.js"),
+        "--platform",
+        platform,
+        "--category",
+        category,
+        "--max-pages",
+        AUCTION_PAGES,
+      ],
+      { required: false },
+    );
+  }
+}
+
+run("Load auctions into Postgres", [script("load-auctions.js")]);
 
 console.log("\n=== refresh complete ===");

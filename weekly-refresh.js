@@ -187,4 +187,26 @@ if (process.env.PROXY_URL) {
 // ---- load everything into Postgres (all sources, upsert) -------------------
 run("Load into Postgres", process.execPath, [path.join(__dirname, "load-listings.js")]);
 
+// ---- AUCTIONS: surplex + troostwijk (the TBAuctions platform) --------------
+// These are auction lots, not dealer ads, so they load into their own table via
+// load-auctions.js — see scripts/db/auction-schema.sql for why they're kept out
+// of truck_listings. Both platforms are plain HTTP, so they belong in this
+// weekly pass. rbauction is NOT here: it needs metered Apify credits, so it's
+// run by hand (apify-auctions-scraper.js — see SCRAPERS.md).
+for (const platform of ["surplex", "troostwijk"]) {
+  for (const category of ["trucks", "trailers"]) {
+    run(`Scrape ${platform} auctions (${category})`, process.execPath, [
+      path.join(__dirname, "tbauctions-scraper.js"),
+      "--platform",
+      platform,
+      "--category",
+      category,
+      "--max-pages",
+      "15",
+    ]);
+  }
+}
+
+run("Load auctions into Postgres", process.execPath, [path.join(__dirname, "load-auctions.js")]);
+
 console.log("\n=== weekly refresh complete ===");

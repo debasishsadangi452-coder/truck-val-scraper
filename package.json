@@ -17,9 +17,15 @@
     "scrape:mobilebg": "node mobilebg-scraper.js",
     "scrape:truck1": "node truck1-scraper.js",
     "scrape:trucksnl": "node trucksnl-scraper.js",
+    "scrape:surplex": "node tbauctions-scraper.js --platform surplex --category trucks",
+    "scrape:troostwijk": "node tbauctions-scraper.js --platform troostwijk --category trucks",
+    "scrape:rbauction": "node apify-auctions-scraper.js --source rbauction",
     "load": "node load-listings.js",
     "smoke:truck1": "node truck1-scraper.js --url",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "load:auctions": "node load-auctions.js",
+    "scrape:tbauctions": "node tbauctions-scraper.js",
+    "scrape:mascus": "node mascus-scraper.js"
   },
   "dependencies": {
     "pg": "^8.16.3",

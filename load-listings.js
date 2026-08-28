@@ -50,6 +50,7 @@ const SOURCES = [
   { slug: "via-mobilis-daf-cf", source: "via_mobilis" },
   { slug: "via-mobilis-volvo-fh", source: "via_mobilis" },
   { slug: "via-mobilis-man-tgx", source: "via_mobilis" },
+  { slug: "mascus-trucks", source: "mascus" },
 ];
 
 const COLUMNS = [
