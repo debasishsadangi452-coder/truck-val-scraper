@@ -28,6 +28,7 @@ const SOURCES = [
   { slug: "troostwijk-trucks", source: "troostwijk" },
   { slug: "troostwijk-trailers", source: "troostwijk" },
   { slug: "rbauction-trucks", source: "rbauction" },
+  { slug: "euroauctions-trucks", source: "euroauctions" },
 ];
 
 const COLUMNS = [

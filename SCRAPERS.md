@@ -52,6 +52,7 @@ duplicated here because this package is standalone; keep the two in sync).
 | `tbauctions-scraper.js` | surplex.com | plain HTTP (Next.js `_next/data`) | `surplex` | working |
 | `tbauctions-scraper.js` | troostwijkauctions.com | plain HTTP (same platform) | `troostwijk` | working |
 | `apify-auctions-scraper.js` | rbauction.com | Apify actor (metered) | `rbauction` | working, opt-in |
+| `euroauctions-scraper.js` | euroauctions.com | free discovery + Apify browser (metered) | `euroauctions` | working, opt-in |
 
 Surplex and Troostwijk are the **same TBAuctions app** (identical category
 UUIDs and lot shape), so one scraper serves both via `--platform`.
@@ -196,3 +197,44 @@ crawling deeper.
 **rbauction is poor value for trucks.** Its European catalogue is construction
 plant: a 40-lot pull spanned 21 categories with 6 excavators, 6 haul trucks and
 exactly **1** truck tractor; a `--make DAF` run returned 1 lot. Prefer Mascus.
+
+## Euro Auctions (two-stage: free discovery + Apify browser)
+
+`euroauctions-scraper.js` is split because the two halves of the site block
+differently:
+
+1. **Discovery is free.** `www.euroauctions.com/en/equipment-search/commercial-vehicles`
+   serves plain HTML listing every live sale's backend link
+   (`Search.do?auctionId=NNNN`) — 14 auctions at last check. A normal fetch gets
+   these, so the auction list costs nothing. `--list-auctions` stops after this.
+2. **The catalogue needs Apify.** Those links point at `euroauctionslive.com`,
+   which answers a direct request with Cloudflare 403. Running
+   `apify/website-content-crawler` with `crawlerType: playwright:firefox` +
+   `useApifyProxy` returns HTTP 200 and the full DOM. Note
+   `htmlTransformer: "none"` is REQUIRED — the default strips the page to
+   readable prose and throws away the markup we parse.
+
+**Parsing:** every lot card ends in a hidden `<form name="BidForm">` holding
+`itemId` / `lotTitle` / `lotDescription` as clean attribute values — far more
+stable than the surrounding presentation markup. The description carries the
+registration and a 17-char VIN. Location, status, bid count and start bid come
+from the card chunk immediately preceding each form. Pagination is `&page=N`
+at 100 lots/page.
+
+**Expect vans, not tractor units.** Euro Auctions is primarily a CONSTRUCTION
+PLANT auctioneer; the "Commercial Vehicles" category is mostly panel vans,
+Sprinters and beavertails. By default the scraper keeps only vehicle-shaped lots
+(`--all-categories` disables that filter) — without it the table fills with
+excavator buckets and breaker hammers. The priority-model hit rate here is much
+lower than on the TBAuctions sites; treat it as breadth, not a DAF XF source.
+
+**Cost:** ~0.4c per catalogue page. All pages go in ONE Apify run (each run has
+a fixed start-up cost, so batching beats a run per page). `--max-auctions` and
+`--max-pages` are hard caps and default low. Not in the weekly cron for that
+reason — run it by hand.
+
+```sh
+node euroauctions-scraper.js --list-auctions          # free
+node euroauctions-scraper.js --max-auctions 5 --max-pages 2
+node load-auctions.js euroauctions-trucks euroauctions
+```
