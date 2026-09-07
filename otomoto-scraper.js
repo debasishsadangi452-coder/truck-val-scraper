@@ -119,6 +119,8 @@ function parseArgs(argv) {
   const args = {
     yearFrom: 2021,
     yearTo: 2022,
+    // Max asking price in EUR (the buying spec's target). Null = no cap.
+    priceToEur: null,
     maxPages: 50,
     delayMs: [1500, 3000],
     detailDelayMs: [1000, 2000],
@@ -136,6 +138,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--year-from") args.yearFrom = Number(argv[++i]);
+    else if (a === "--price-to") args.priceToEur = Number(argv[++i]);
     else if (a === "--year-to") args.yearTo = Number(argv[++i]);
     else if (a === "--max-pages") args.maxPages = Number(argv[++i]);
     else if (a === "--concurrency") args.concurrency = Math.max(1, Number(argv[++i]) || 1);
@@ -180,12 +183,22 @@ async function mapPool(items, limit, worker) {
   return results;
 }
 
-function buildPageUrl(yearFrom, yearTo, page, makes, query) {
+// otomoto prices its ads in PLN, so a EUR ceiling from the buying spec has to be
+// converted before it goes on the URL. Same fixed rate the API layer uses
+// (server/routes/listings.js) so the server-side cut and our own EUR filtering
+// agree. Verified live: adding this param really does narrow the result set
+// (DAF 2021-22 = 222 ads; with a 95 000 PLN cap = 1).
+const PLN_PER_EUR = 4.3;
+
+function buildPageUrl(yearFrom, yearTo, page, makes, query, priceToEur) {
   const params = new URLSearchParams();
   params.set("search[filter_float_year:from]", String(yearFrom));
   params.set("search[filter_float_year:to]", String(yearTo));
   makes.forEach((make, i) => params.set(`search[filter_enum_make][${i}]`, make));
   if (query) params.set("search[qr]", query);
+  if (priceToEur) {
+    params.set("search[filter_float_price:to]", String(Math.round(priceToEur * PLN_PER_EUR)));
+  }
   if (page > 1) params.set("page", String(page));
   return `${BASE_URL}?${params.toString()}`;
 }
@@ -361,7 +374,7 @@ async function writeOutputs(byId) {
 }
 
 async function runQuery(
-  { yearFrom, yearTo, maxPages, delayMs, detailDelayMs, details, concurrency, makes, query },
+  { yearFrom, yearTo, maxPages, delayMs, detailDelayMs, details, concurrency, makes, query, priceToEur },
   byId,
   processedInRun,
   scrapedAt,
@@ -369,11 +382,12 @@ async function runQuery(
 ) {
   const label = query ? `query="${query}"` : "(no query)";
   console.log(
-    `--- otomoto.pl scrape: years ${yearFrom}-${yearTo}, makes=[${makes.join(",") || "any"}], ${label} ---`,
+    `--- otomoto.pl scrape: years ${yearFrom}-${yearTo}, makes=[${makes.join(",") || "any"}], ${label}` +
+      `${priceToEur ? `, price<=${priceToEur} EUR` : ""} ---`,
   );
 
   for (let page = 1; page <= maxPages; page++) {
-    const url = buildPageUrl(yearFrom, yearTo, page, makes, query);
+    const url = buildPageUrl(yearFrom, yearTo, page, makes, query, priceToEur);
     console.log(`fetching page ${page}: ${url}`);
     const html = await fetchPage(url);
     if (!html) {

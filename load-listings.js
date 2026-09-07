@@ -51,6 +51,8 @@ const SOURCES = [
   { slug: "via-mobilis-volvo-fh", source: "via_mobilis" },
   { slug: "via-mobilis-man-tgx", source: "via_mobilis" },
   { slug: "mascus-trucks", source: "mascus" },
+  { slug: "equipped4u-trucks", source: "equipped4u" },
+  { slug: "hesselink-trucks", source: "hesselink" },
 ];
 
 const COLUMNS = [

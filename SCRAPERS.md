@@ -24,13 +24,15 @@ Shared code in `lib/`:
 | `truck7-scraper.js` | truck7.eu | plain HTTP (Livewire) | `truck7` | working |
 | `autoline-bg-scraper.js` | autoline.bg | plain HTTP (JSON-LD, Bulgarian) | `autoline_bg` | working |
 | `truck1-scraper.js` | truck1.eu | Playwright (JS challenge) | `truck1` | built; run locally, verify selectors |
-| `trucksnl-scraper.js` | trucksnl.com | Playwright (reCAPTCHA Enterprise) | `trucksnl` | built; gate may block — see README |
+| `trucksnl-scraper.js` | trucksnl.com | Playwright, local only (reCAPTCHA Enterprise) | `trucksnl` | working — run locally, NOT in cron |
 | `mantopused-scraper.js` | man-topused.com | — | — | stub (site retired) |
 | `oktrucks-scraper.js` | oktrucks.com | — | — | stub (needs browser + residential IP) |
 | `truckstore-scraper.js` | truckstore.com | — | — | stub (XHR/JS) |
 | `usedscania-scraper.js` | used.scania.com | — | — | stub (SPA/API) |
 | `usedvolvo-scraper.js` | usedvolvotrucks.com | — | — | stub (needs browser + residential IP) |
 | `mascus-scraper.js` | mascus.com | Apify actor (metered) | `mascus` | working, opt-in |
+| `equipped4u-scraper.js` | equipped4u.eu | plain HTTP (HTML cards) | `equipped4u` | working |
+| `hesselink-scraper.js` | hesselinktrucks.com | plain HTTP (JSON-LD `ItemList`) | `hesselink` | working — no price (client-rendered) |
 
 Blocked stubs are runnable and exit non-zero with an explanation — not silent no-ops.
 
@@ -107,6 +109,29 @@ lots.
 
 These need a residential proxy or a per-site Apify actor (none exists for them
 in the store today).
+
+## Refrigerated trucks — a separate category, no new scraper
+
+`refrigerated-scraper.js` is a FILTER over the listings every dealer scraper
+above already wrote to `output/<slug>/listings.json`, not a new source. No
+scraper captures a structured body-type field and `truck_listings` has no
+`body_type` column, so a refrigerated (reefer) truck is identified the way a
+person would skim a listing: by matching `title`/`description` against reefer
+terms across the languages these sites use (`isRefrigerated()` in
+`lib/auction-core.js` — refrigerat*, reefer, frigo*, kühl*, isotherm*,
+chłodni*, frigorífic*, thermo king, carrier supra/vector).
+
+Matches load into `truck_listings` tagged with a `_refrigerated` suffix on
+`source` (e.g. `otomoto_refrigerated`), so the category stays queryable on its
+own (`WHERE source LIKE '%_refrigerated'`) without a schema migration or
+touching any existing scraper. Run the normal scrapers first — this only reads
+their `output/`, it never hits the network itself.
+
+```sh
+node refrigerated-scraper.js               # filter every source, load matches
+node refrigerated-scraper.js --dry-run     # counts only, nothing written
+node refrigerated-scraper.js --sources otomoto,autoline,truck7
+```
 
 ## Running
 
@@ -198,6 +223,49 @@ crawling deeper.
 plant: a 40-lot pull spanned 21 categories with 6 excavators, 6 haul trucks and
 exactly **1** truck tractor; a `--make DAF` run returned 1 lot. Prefer Mascus.
 
+## 19-site audit (probed 2026-09) — 2 shipped, 17 rejected with reasons
+
+The Chrome extension's `server/sources.js` had registered ~31 unverified sites
+behind `needsHuman: true` purely as a conservative default — no evidence
+either way. Probed all with a plain server-side request to see which could
+move to a real backend scraper instead. Only **equipped4u.eu** and
+**hesselinktrucks.com** panned out; save yourself re-investigating the rest:
+
+**Genuinely gated/blocked (12)** — HTTP 403 and/or a CAPTCHA/Cloudflare
+challenge marker in the response body: truck-mobiles.eu, truckscorner.com,
+agriaffaires.com, walter-leasing.com, machinerytrader.eu,
+versteijnentrucks.nl, truckscout24.it, autoscout24.it,
+polovniautomobili.com, trucklocator.co.uk, autotrader.co.uk. These stay
+extension-only — the human-in-the-loop CAPTCHA flow is the only path in.
+
+**Reachable, but the homepage is a navigation shell with ZERO listing
+links** (net-truck.com, camion-occasion.com, keltruck (usedtrucks.keltruck.com),
+ironplanet_eu, truckplanet.com, cargobull trailer-store.com,
+fahrzeugboerse.fliegl-trailer.com, mascus.rs) — a scraper pointed at the
+homepage would silently return 0 rows forever, which is worse than not
+building it. Each needs its real category/search URL found by hand (nav-link
+text hunting, like the Planet Trucks family in extension-site-viability
+memory) before a scraper is worth writing.
+
+**Found a real listing URL, but it turned out to be JS-rendered anyway**
+(ironplanet.com and truckplanet.com's `/Truck+Tractors?ct=N` pages, and
+used-renault-trucks.com's guessed `/vehicles` path 404s): the "price hits" a
+naive regex scan finds are FILTER FACET LABELS ("$1,000 - $4,999"), not real
+listing prices — always confirm a price match sits inside an actual card, not
+a sidebar filter, before trusting a probe's price count.
+
+**Shipped:**
+- `equipped4u-scraper.js` — clean HTML cards on `/gebruikte-trucks/` and
+  `/gebruikte-opleggers/`, full data including price. General equipment dealer
+  (also carries forklifts/telehandlers), so non-truck rows come through with
+  make="" — let the priority-model filter downstream handle relevance.
+- `hesselink-scraper.js` — a real schema.org `ItemList` JSON-LD block on
+  `/c/all` (and `/c/all/brand:<x>`) carries the whole 12-vehicle stock, but NO
+  price — that field is filled client-side after Nuxt hydration and isn't in
+  the server-rendered response at all. Rows load with make/model/year/mileage
+  and an empty price; that's the honest ceiling of a plain-HTTP scrape here,
+  not a bug.
+
 ## Euro Auctions (two-stage: free discovery + Apify browser)
 
 `euroauctions-scraper.js` is split because the two halves of the site block
@@ -237,4 +305,41 @@ reason — run it by hand.
 node euroauctions-scraper.js --list-auctions          # free
 node euroauctions-scraper.js --max-auctions 5 --max-pages 2
 node load-auctions.js euroauctions-trucks euroauctions
+```
+
+## Trucks.nl (local Playwright — no Apify)
+
+`trucksnl-scraper.js` was a blocked stub; as of 2026-08-29 it WORKS, with a local
+headless Chromium and no proxy. The gate is real but **route-specific**:
+
+| Route | Result |
+|---|---|
+| `/trucks` | **passes** a plain headless browser |
+| `/search?category=trucks&make=daf` | **still gated** ("Checking your browser") |
+
+A direct `fetch()` of `/trucks` returns HTTP 200 with a ~20KB challenge page and
+zero listings — it fails silently, which is why this needs a browser. It does NOT
+need Apify, so this source costs nothing to run.
+
+Because `/search` is gated, the site's own make/country/euro-norm filters are
+unreachable; we crawl the unfiltered `/trucks` list (36 cards/page, `?page=N`)
+and filter after parsing with `--priority-only`.
+
+**Parsing:** there is no state blob to lift — `window.__NUXT__` is empty and the
+ad links are client-rendered. Each card is a `div[class*="bg-card"]` holding an
+`a[href$="-vd"]` whose slug ends in the numeric ad id. The spec is one
+unpunctuated text run, so it is anchored on the single `"<n> km<year>"` token
+(taking the LAST match, since sellers type decoy mileages into titles) and read
+outwards. The `City, Country` line is taken from its own DOM leaf — in the
+flattened text a dealer with no review count runs straight into it.
+
+⚠️ **Local only.** reCAPTCHA Enterprise scores by IP reputation: this clears from
+a residential connection but likely will not from Railway/CI. It is deliberately
+NOT in `run.js`'s weekly cron. 0 listings means the gate, not a parser bug —
+re-run with `--headful` to see the page.
+
+```sh
+node trucksnl-scraper.js --pages 20
+node trucksnl-scraper.js --pages 50 --priority-only
+node load-listings.js trucksnl-trucks trucksnl
 ```
