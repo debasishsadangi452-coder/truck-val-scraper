@@ -53,6 +53,19 @@ const SOURCES = [
   { slug: "mascus-trucks", source: "mascus" },
   { slug: "equipped4u-trucks", source: "equipped4u" },
   { slug: "hesselink-trucks", source: "hesselink" },
+  // Backend-only sources: reachable over plain HTTP, so they are scraped here
+  // and deliberately have NO extension adapter (and are absent from
+  // ENABLED_SOURCE_IDS in server/sources.js). `source` matches the registry id
+  // there where one exists, so rows stay addressable by the same name.
+  { slug: "camion-occasion", source: "camion_occasion" },
+  { slug: "francepoidslourds", source: "francepoidslourds" },
+  { slug: "terrenet-trucks", source: "terrenet" },
+  { slug: "motogratka-trucks", source: "motogratka" },
+  { slug: "truckexporter", source: "truckexporter" },
+  { slug: "lastbilbasen", source: "lastbilbasen" },
+  { slug: "usedrenault-fr", source: "usedrenault_fr" },
+  { slug: "tirbazar", source: "tirbazar" },
+  { slug: "proresale", source: "proresale" },
 ];
 
 const COLUMNS = [
